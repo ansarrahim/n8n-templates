@@ -1,0 +1,152 @@
+{
+  "name": "AI Lead Auto-Responder",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-autoresponder",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook1",
+      "name": "Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        0
+      ],
+      "webhookId": "lead-autoresponder"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [ { parts: [ { text: `You are a warm, professional sales assistant replying to a new inbound lead on behalf of a business. Write a short reply email (under 130 words) thanking them for reaching out, addressing what they asked about, and saying the team will follow up soon. No subject line, no markdown, plain text only, sign off as \"The Team\".\\n\\nLead name: ${$json.body.name}\\nLead email: ${$json.body.email}\\nLead message: ${$json.body.message}` } ] } ] }) }}",
+        "options": {}
+      },
+      "id": "gemini1",
+      "name": "Draft Reply (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        0
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": null,
+          "name": "Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const reply = $json.candidates[0].content.parts[0].text.trim();\nconst lead = $('Lead Webhook').item.json.body;\nreturn {\n  json: {\n    to: lead.email,\n    name: lead.name,\n    subject: `Thanks for reaching out, ${lead.name}!`,\n    reply\n  }\n};"
+      },
+      "id": "code1",
+      "name": "Build Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [$json.to], subject: $json.subject, text: $json.reply }) }}",
+        "options": {}
+      },
+      "id": "resend1",
+      "name": "Send Reply (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"sent\", to: $(\"Build Email\").item.json.to } }}",
+        "options": {}
+      },
+      "id": "respond1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Draft Reply (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Reply (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Build Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email": {
+      "main": [
+        [
+          {
+            "node": "Send Reply (Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reply (Resend)": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,255 @@
+{
+  "name": "New Order Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "order-sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook3",
+      "name": "Order Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        0
+      ],
+      "webhookId": "order-sync"
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "// --- Buyer config: edit these two lines for your business ---\nconst VIP_THRESHOLD = 500;\nconst BUSINESS_ALERT_EMAIL = \"delivered@resend.dev\";\n// ----------------------------------------------------------------\n\nconst body = $json.body;\nif (!body.customerName || !body.customerEmail || !body.items || body.totalValue == null) {\n  throw new Error(\"Missing required order fields: customerName, customerEmail, items, totalValue\");\n}\n\nconst orderId = body.orderId || `ORD-${Date.now()}`;\nconst itemsSummary = Array.isArray(body.items)\n  ? body.items.map((i) => (typeof i === \"string\" ? i : `${i.qty || 1}x ${i.name}`)).join(\", \")\n  : String(body.items);\nconst totalValue = Number(body.totalValue);\nconst isVip = totalValue >= VIP_THRESHOLD;\n\nreturn {\n  json: {\n    orderId,\n    customerName: body.customerName,\n    customerEmail: body.customerEmail,\n    itemsSummary,\n    totalValue,\n    currency: body.currency || \"USD\",\n    isVip,\n    businessAlertEmail: BUSINESS_ALERT_EMAIL\n  }\n};"
+      },
+      "id": "code3",
+      "name": "Validate & Enrich",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.airtable.com/v0/appxb2oU2V6jbg1fw/Orders",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { \"Order ID\": $json.orderId, \"Customer\": $json.customerName, \"Email\": $json.customerEmail, \"Items\": $json.itemsSummary, \"Total\": $json.totalValue, \"Currency\": $json.currency, \"VIP\": $json.isVip } }) }}",
+        "options": {}
+      },
+      "id": "airtable3",
+      "name": "Log to Airtable",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "position": [
+        -320,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Airtable API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [$('Validate & Enrich').item.json.customerEmail], subject: `Order confirmed: ${$('Validate & Enrich').item.json.orderId}`, text: `Hi ${$('Validate & Enrich').item.json.customerName},\\n\\nThanks for your order! Here's your confirmation.\\n\\nOrder ID: ${$('Validate & Enrich').item.json.orderId}\\nItems: ${$('Validate & Enrich').item.json.itemsSummary}\\nTotal: ${$('Validate & Enrich').item.json.totalValue} ${$('Validate & Enrich').item.json.currency}\\n\\nWe'll be in touch with shipping/next steps shortly.` }) }}",
+        "options": {}
+      },
+      "id": "resend3a",
+      "name": "Send Confirmation (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -80,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond3",
+              "leftValue": "={{ $('Validate & Enrich').item.json.isVip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if3",
+      "name": "Is VIP?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [$('Validate & Enrich').item.json.businessAlertEmail], subject: `VIP order: ${$('Validate & Enrich').item.json.orderId} ($${$('Validate & Enrich').item.json.totalValue})`, text: `High-value order just came in.\\n\\nCustomer: ${$('Validate & Enrich').item.json.customerName} (${$('Validate & Enrich').item.json.customerEmail})\\nOrder ID: ${$('Validate & Enrich').item.json.orderId}\\nItems: ${$('Validate & Enrich').item.json.itemsSummary}\\nTotal: ${$('Validate & Enrich').item.json.totalValue} ${$('Validate & Enrich').item.json.currency}` }) }}",
+        "options": {}
+      },
+      "id": "resend3b",
+      "name": "Send VIP Alert (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        -120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"synced\", orderId: $('Validate & Enrich').item.json.orderId, isVip: $('Validate & Enrich').item.json.isVip, vipAlerted: true } }}",
+        "options": {}
+      },
+      "id": "respond3a",
+      "name": "Respond (VIP)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"synced\", orderId: $('Validate & Enrich').item.json.orderId, isVip: $('Validate & Enrich').item.json.isVip, vipAlerted: false } }}",
+        "options": {}
+      },
+      "id": "respond3b",
+      "name": "Respond (Standard)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        400,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Order Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Enrich",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Enrich": {
+      "main": [
+        [
+          {
+            "node": "Log to Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Airtable": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation (Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirmation (Resend)": {
+      "main": [
+        [
+          {
+            "node": "Is VIP?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is VIP?": {
+      "main": [
+        [
+          {
+            "node": "Send VIP Alert (Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Standard)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send VIP Alert (Resend)": {
+      "main": [
+        [
+          {
+            "node": "Respond (VIP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,217 @@
+{
+  "name": "Review Sentiment Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "review-sentiment",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook2",
+      "name": "Review Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -600,
+        0
+      ],
+      "webhookId": "review-sentiment"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [ { parts: [ { text: `Classify the sentiment of this customer review as exactly one of: positive, neutral, negative. Also write a one-sentence summary of the main point.\\n\\nRespond with ONLY raw JSON, no markdown fences, in this exact shape: {\"sentiment\": \"positive|neutral|negative\", \"summary\": \"...\"}.\\n\\nCustomer: ${$json.body.customerName}\\nSource: ${$json.body.source}\\nRating: ${$json.body.rating}\\nReview: \"${$json.body.reviewText}\"` } ] } ], generationConfig: { responseMimeType: \"application/json\" } }) }}",
+        "options": {}
+      },
+      "id": "gemini2",
+      "name": "Analyze Sentiment (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -360,
+        0
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": null,
+          "name": "Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const parsed = JSON.parse($json.candidates[0].content.parts[0].text);\nconst review = $('Review Webhook').item.json.body;\nreturn {\n  json: {\n    customerName: review.customerName,\n    source: review.source,\n    rating: review.rating,\n    reviewText: review.reviewText,\n    sentiment: parsed.sentiment,\n    summary: parsed.summary\n  }\n};"
+      },
+      "id": "code2",
+      "name": "Parse Sentiment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.sentiment }}",
+              "rightValue": "negative",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if2",
+      "name": "Is Negative?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [\"delivered@resend.dev\"], subject: `Negative review alert: ${$json.customerName} on ${$json.source}`, text: `A negative review just came in.\\n\\nCustomer: ${$json.customerName}\\nSource: ${$json.source}\\nRating: ${$json.rating}\\n\\nReview: ${$json.reviewText}\\n\\nAI summary: ${$json.summary}` }) }}",
+        "options": {}
+      },
+      "id": "resend2",
+      "name": "Send Alert (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        380,
+        -120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"processed\", sentiment: $(\"Parse Sentiment\").item.json.sentiment, alerted: true } }}",
+        "options": {}
+      },
+      "id": "respond2a",
+      "name": "Respond (Alerted)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        620,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"processed\", sentiment: $json.sentiment, alerted: false } }}",
+        "options": {}
+      },
+      "id": "respond2b",
+      "name": "Respond (No Alert)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        380,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Review Webhook": {
+      "main": [
+        [
+          {
+            "node": "Analyze Sentiment (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Sentiment (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Is Negative?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Negative?": {
+      "main": [
+        [
+          {
+            "node": "Send Alert (Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (No Alert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert (Resend)": {
+      "main": [
+        [
+          {
+            "node": "Respond (Alerted)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
