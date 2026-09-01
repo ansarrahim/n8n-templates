@@ -1,0 +1,177 @@
+{
+  "name": "Missed-Call Text-Back (email demo)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "missed-call",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook1",
+      "name": "Missed Call Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        0
+      ],
+      "webhookId": "missed-call"
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const body = $json.body || {};\nreturn {\n  json: {\n    callerNumber: body.From || body.callerNumber || 'unknown',\n    businessNumber: body.To || body.businessNumber || '',\n    callStatus: body.CallStatus || body.callStatus || 'no-answer',\n    demoNotifyEmail: body.demoNotifyEmail || 'delivered@resend.dev',\n    businessName: body.businessName || 'CrewLogic Labs',\n  },\n};"
+      },
+      "id": "code1",
+      "name": "Parse Call Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [ { parts: [ { text: `Write a single friendly text message (SMS — under 160 characters, no line breaks, no markdown) from a small business called \"${$json.businessName}\" to a caller they just missed. Apologize briefly, ask what they need help with, say someone will follow up shortly. Plain text only, nothing else in your response — just the message itself.` } ] } ] }) }}",
+        "options": {}
+      },
+      "id": "http1",
+      "name": "Draft Text-Back (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -320,
+        0
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "cQtzoicUAwQjSW4R",
+          "name": "Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const text = $json.candidates[0].content.parts[0].text.trim();\nconst call = $('Parse Call Event').item.json;\nreturn {\n  json: {\n    callerNumber: call.callerNumber,\n    businessName: call.businessName,\n    demoNotifyEmail: call.demoNotifyEmail,\n    smsText: text,\n  },\n};"
+      },
+      "id": "code2",
+      "name": "Build Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [$json.demoNotifyEmail], subject: \"[DEMO] Text-back for missed call from \" + $json.callerNumber, text: \"This is a DEMO of the missed-call text-back automation. In production, the message below is sent as a real SMS to \" + $json.callerNumber + \" via Twilio/Vonage — for this demo it is delivered as an email instead.\\n\\n--- SMS content ---\\n\" + $json.smsText }) }}",
+        "options": {}
+      },
+      "id": "http2",
+      "name": "Send Text-Back (Resend demo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "sJ7Y3JR6FFFT8M2G",
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"sent\", \"sms\": $json } }}",
+        "options": {}
+      },
+      "id": "resp1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        420,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Missed Call Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Call Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Call Event": {
+      "main": [
+        [
+          {
+            "node": "Draft Text-Back (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Text-Back (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Build Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Message": {
+      "main": [
+        [
+          {
+            "node": "Send Text-Back (Resend demo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Text-Back (Resend demo)": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

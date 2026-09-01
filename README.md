@@ -1,6 +1,6 @@
 # n8n Automation Templates
 
-Three self-contained n8n workflows built for small/local businesses — each one is a real automation a business would actually pay for, not a demo. All three were built and tested live against real APIs (Gemini, Resend, Airtable) before being exported here.
+Five self-contained n8n workflows built for small/local businesses — each one is a real automation a business would actually pay for, not a demo. All five were built and tested live against real APIs (Gemini, Resend, Airtable) before being exported here.
 
 ## 1. AI Lead Auto-Responder (`workflows/1-ai-lead-autoresponder.json`)
 
@@ -19,6 +19,20 @@ Webhook receives a new review (customer, source, rating, text) → Gemini classi
 Webhook receives a new order → validates/enriches it → logs it to an Airtable base (CRM/inventory stand-in) → emails the customer a confirmation → if the order is above a configurable VIP threshold, also alerts the business owner.
 
 **Tested live:** validation, VIP branching, Airtable record creation (including the VIP checkbox field), customer confirmation email, and VIP alert email all confirmed working end-to-end against a real Airtable base. The Airtable node is set to fail gracefully (`onError: continueRegularOutput`), so even if a buyer's Airtable credentials are misconfigured, the confirmation/alert emails still go out.
+
+## 4. Missed-Call Text-Back (`workflows/4-missed-call-textback.json`)
+
+Webhook receives a missed-call event (shaped like a real Twilio Voice status callback — `From`, `To`, `CallStatus`) → Gemini drafts a short, warm SMS-length reply → sent back to the caller. Solves the classic "phone rings, nobody answers, lead is gone" problem for contractors, salons, clinics.
+
+**Honest note on this one specifically:** the buyer needs their own SMS provider account (Twilio, Vonage, etc. — roughly $1/mo for a number plus a fraction of a cent per message) to actually send real texts. This workflow was built and tested with the SMS-send step standing in as a Resend email (clearly labeled `[DEMO]` in the subject) instead, since a real trial SMS account wasn't obtainable at build time. Swapping the final HTTP Request node for a real Twilio/Vonage SMS call is a single-node change — the trigger shape, the AI drafting step, and the whole rest of the logic don't change at all.
+
+**Tested live:** a real simulated missed-call payload produced a real, on-brand, 101-character drafted message and a real (demo) delivery.
+
+## 5. Support Triage + FAQ Auto-Answer (`workflows/5-support-triage-faq-answer.json`)
+
+Webhook receives a support message (name, email, message) → Gemini checks it against an inline FAQ knowledge base → if it's covered, drafts and sends a grounded reply straight to the customer; if it's not (billing disputes, complaints, anything ambiguous), skips answering entirely and emails a human a one-paragraph summary instead. The FAQ list lives in a Code node as a plain array — easy to edit inline, or swap for an Airtable/Notion lookup if a buyer wants to self-edit it without touching the workflow.
+
+**Tested live:** both branches confirmed with real requests — a pricing question got answered correctly and grounded in the actual FAQ text; a billing/refund complaint correctly skipped auto-answering and escalated with an accurate summary instead.
 
 ## Setup (per workflow, ~5 minutes)
 

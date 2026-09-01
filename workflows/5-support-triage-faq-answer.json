@@ -1,0 +1,280 @@
+{
+  "name": "Support Triage + FAQ Auto-Answer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "support-triage",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook1",
+      "name": "Support Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        0
+      ],
+      "webhookId": "support-triage"
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const body = $json.body || {};\nconst faq = [{\"q\":\"What kind of projects do you build?\",\"a\":\"Full-stack web apps, Web3/blockchain systems, and AI-powered automation with n8n — real, deployed, and verifiable, not mockups or pitch decks.\"},{\"q\":\"How much do the automation templates cost?\",\"a\":\"Templates range from $149 to $199 depending on complexity — each is a tested, working n8n workflow with setup docs. See the Automations page for the current list.\"},{\"q\":\"Do you use AI to build the projects?\",\"a\":\"Yes, openly. AI accelerates implementation, but every architecture decision, code review, and what actually ships is directed personally — explained on the homepage as the 70/30 Engineering Rule.\"},{\"q\":\"Can I get something custom built, not from the template list?\",\"a\":\"Yes — reach out through the contact form with what you need and a fixed-price proposal gets scoped from there.\"},{\"q\":\"Are you currently available for new projects?\",\"a\":\"Check the availability badge on the homepage for real-time status, or just ask directly — usually the fastest way to get a clear answer.\"},{\"q\":\"Do you work with clients outside Pakistan?\",\"a\":\"Yes — delivery is remote and async, so location isn't a blocker.\"},{\"q\":\"What happens after I buy a template?\",\"a\":\"You get the full workflow JSON plus a setup guide by email, ready to import into your own n8n instance and connect your own accounts.\"}];\nconst faqText = faq.map((item, i) => `${i + 1}. Q: ${item.q}\\nA: ${item.a}`).join('\\n\\n');\nreturn {\n  json: {\n    name: body.name || 'there',\n    email: body.email || '',\n    message: body.message || '',\n    faqText,\n  },\n};"
+      },
+      "id": "code1",
+      "name": "Load FAQ + Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [ { parts: [ { text: `You are a support triage assistant for CrewLogic Labs, a software agency. You answer customer questions using ONLY the FAQ below — never invent policy, pricing, or promises not stated in it.\\n\\nFAQ:\\n${$json.faqText}\\n\\nCustomer name: ${$json.name}\\nCustomer message: ${$json.message}\\n\\nDecide: does one or more FAQ entries directly answer this? If yes, set answerable=true and write a short, warm, plain-text reply (under 100 words, sign off as 'CrewLogic Labs') grounded only in the matched FAQ answer(s). If no FAQ entry covers it (billing dispute, custom scoping question, complaint, anything ambiguous), set answerable=false and write a one-paragraph escalationSummary describing what the customer needs, for a human to follow up.\\n\\nRespond with ONLY this JSON shape, no markdown: {\\\"answerable\\\": boolean, \\\"customerReply\\\": string, \\\"escalationSummary\\\": string}` } ] } ], generationConfig: { responseMimeType: \"application/json\" } }) }}",
+        "options": {}
+      },
+      "id": "http1",
+      "name": "Triage (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -320,
+        0
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "cQtzoicUAwQjSW4R",
+          "name": "Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const raw = $json.candidates[0].content.parts[0].text;\nconst parsed = JSON.parse(raw);\nconst lead = $('Load FAQ + Context').item.json;\nreturn {\n  json: {\n    name: lead.name,\n    email: lead.email,\n    message: lead.message,\n    answerable: parsed.answerable === true,\n    customerReply: parsed.customerReply || '',\n    escalationSummary: parsed.escalationSummary || '',\n  },\n};"
+      },
+      "id": "code2",
+      "name": "Parse Triage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.answerable }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if1",
+      "name": "Answerable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [$json.email], subject: \"Re: your question\", text: $json.customerReply }) }}",
+        "options": {}
+      },
+      "id": "http2",
+      "name": "Send Answer (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        -140
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "sJ7Y3JR6FFFT8M2G",
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [\"ansarrahim789@gmail.com\"], reply_to: $json.email, subject: \"Support escalation: \" + $json.name, text: \"Needs a human reply.\\n\\nFrom: \" + $json.name + \" <\" + $json.email + \">\\n\\nOriginal message:\\n\" + $json.message + \"\\n\\nAI summary:\\n\" + $json.escalationSummary }) }}",
+        "options": {}
+      },
+      "id": "http3",
+      "name": "Send Escalation (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        160
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "sJ7Y3JR6FFFT8M2G",
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"answered\" } }}",
+        "options": {}
+      },
+      "id": "resp1",
+      "name": "Respond Answered",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        680,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"escalated\" } }}",
+        "options": {}
+      },
+      "id": "resp2",
+      "name": "Respond Escalated",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        680,
+        160
+      ]
+    }
+  ],
+  "connections": {
+    "Support Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load FAQ + Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load FAQ + Context": {
+      "main": [
+        [
+          {
+            "node": "Triage (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triage (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Parse Triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Triage": {
+      "main": [
+        [
+          {
+            "node": "Answerable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answerable?": {
+      "main": [
+        [
+          {
+            "node": "Send Answer (Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Escalation (Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Answer (Resend)": {
+      "main": [
+        [
+          {
+            "node": "Respond Answered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Escalation (Resend)": {
+      "main": [
+        [
+          {
+            "node": "Respond Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
