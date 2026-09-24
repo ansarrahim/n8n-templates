@@ -1,0 +1,562 @@
+{
+  "name": "Lead Qualification & Follow-Up",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-qualification",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook6a",
+      "name": "Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1600, 0],
+      "webhookId": "lead-qualification"
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const body = $json.body || {};\nif (!body.name || (!body.email && !body.phone)) {\n  throw new Error(\"Missing required lead fields: name, and at least one of email/phone\");\n}\n\nreturn {\n  json: {\n    leadReceivedAtMs: Date.now(),\n    name: body.name,\n    email: body.email || \"\",\n    phone: body.phone || \"\",\n    companyName: body.companyName || \"\",\n    companyWebsite: body.companyWebsite || \"\",\n    serviceArea: body.serviceArea || \"\",\n    buildingType: body.buildingType || \"\",\n    sqft: body.sqft != null ? Number(body.sqft) : null,\n    frequency: body.frequency || \"\",\n    urgency: body.urgency || \"\",\n    decisionRole: body.decisionRole || \"\",\n    source: body.source || \"\",\n    message: body.message || \"\"\n  }\n};"
+      },
+      "id": "code6a",
+      "name": "Capture & Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1360, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond6a",
+              "leftValue": "={{ $json.companyWebsite }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if6a",
+      "name": "Has Company Website?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-1120, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v1/scrape",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $json.companyWebsite, formats: [\"markdown\"] }) }}",
+        "options": {}
+      },
+      "id": "http6a",
+      "name": "Enrich via Firecrawl",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "position": [-880, -140],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Firecrawl API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const markdown = ($json.data && $json.data.markdown) ? $json.data.markdown : \"\";\nconst lower = markdown.toLowerCase();\n\nlet enrichmentSignal = 0;\nlet enrichmentNote = \"\";\n\nif (/current (cleaning|janitorial) (company|provider|vendor)|switch(ing)? (cleaning|janitorial) (company|provider)/.test(lower)) {\n  enrichmentSignal = 5;\n  enrichmentNote = \"Company site suggests they may be switching cleaning providers\";\n} else if (markdown && (lower.includes(\"sq ft\") || lower.includes(\"square feet\") || lower.includes(\"sqft\"))) {\n  enrichmentSignal = 5;\n  enrichmentNote = \"Company site independently confirms a facility size mention\";\n}\n\nconst lead = $('Capture & Validate').item.json;\nreturn {\n  json: {\n    ...lead,\n    enrichmentSignal,\n    enrichmentNote,\n    firecrawlStatus: markdown ? \"ok\" : \"empty\"\n  }\n};"
+      },
+      "id": "code6b",
+      "name": "Parse Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-640, -140]
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const lead = $('Capture & Validate').item.json;\nreturn {\n  json: {\n    ...lead,\n    enrichmentSignal: 0,\n    enrichmentNote: \"\",\n    firecrawlStatus: \"skipped\"\n  }\n};"
+      },
+      "id": "code6c",
+      "name": "Skip Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-880, 140]
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "// --- Buyer config: edit these for your business ---\nconst SERVICE_AREA_KEYWORDS = [\"downtown\", \"midtown\", \"north side\"]; // zips/cities/neighborhoods you service\nconst TARGET_BUILDING_TYPES = [\"office\", \"medical\", \"retail\", \"warehouse\"];\nconst MIN_SQFT_QUALIFIED = 3000;\nconst MID_SQFT_TIER = 1000;\nconst AUTO_BOOK_THRESHOLD = 75;\nconst HUMAN_REVIEW_MIN = 40;\nconst HUMAN_REVIEW_MAX = 65;\nconst SALES_EMAIL = \"delivered@resend.dev\";\nconst BOOKING_LINK = \"https://cal.com/muhammad-ansar-lnji2j/30min\";\n// ----------------------------------------------------\n\nconst lead = $json;\n\n// Spam/junk override -- still routed to a human, never silently discarded.\nconst msg = (lead.message || \"\").toLowerCase();\nconst isJunk = !lead.name || msg.includes(\"test test\") || /^(asdf|xxx|n\\/a)$/i.test((lead.name || \"\").trim());\nif (isJunk) {\n  return {\n    json: {\n      ...lead,\n      score: 0,\n      needsHumanReview: true,\n      routeDecision: \"human\",\n      scoreExplanation: \"Flagged as likely spam or test data -- routed to a human to confirm rather than discarded.\",\n      responseTimeMs: Date.now() - lead.leadReceivedAtMs,\n      salesEmail: SALES_EMAIL,\n      bookingLink: BOOKING_LINK\n    }\n  };\n}\n\nlet score = 0;\nconst reasons = [];\n\n// 1. Service area\nconst area = (lead.serviceArea || \"\").toLowerCase();\nif (area) {\n  const inArea = SERVICE_AREA_KEYWORDS.some((k) => area.includes(k.toLowerCase()));\n  if (inArea) { score += 20; reasons.push(\"in service area (+20)\"); }\n  else { reasons.push(\"service area not recognized (+0)\"); }\n} else {\n  reasons.push(\"no service area given (+0)\");\n}\n\n// 2. Building type\nconst btype = (lead.buildingType || \"\").toLowerCase();\nif (TARGET_BUILDING_TYPES.some((t) => btype.includes(t))) { score += 15; reasons.push(\"target building type (+15)\"); }\nelse if (btype) { score += 5; reasons.push(\"non-target but known building type (+5)\"); }\nelse { reasons.push(\"building type unspecified (+0)\"); }\n\n// 3. Sqft tier\nconst sqft = lead.sqft;\nif (sqft != null && sqft >= MIN_SQFT_QUALIFIED) { score += 20; reasons.push(`sqft ${sqft} meets ideal size (+20)`); }\nelse if (sqft != null && sqft >= MID_SQFT_TIER) { score += 10; reasons.push(`sqft ${sqft} mid-tier (+10)`); }\nelse { reasons.push(\"sqft too small or unspecified (+0)\"); }\n\n// 4. Frequency\nconst freq = (lead.frequency || \"\").toLowerCase();\nif (freq.includes(\"week\") || freq.includes(\"daily\") || freq.includes(\"recurring\")) { score += 15; reasons.push(\"recurring service requested (+15)\"); }\nelse if (freq) { score += 5; reasons.push(\"one-time service requested (+5)\"); }\nelse { reasons.push(\"frequency unspecified (+0)\"); }\n\n// 5. Urgency\nconst urgency = (lead.urgency || \"\").toLowerCase();\nif (urgency.includes(\"asap\") || urgency.includes(\"this week\") || urgency.includes(\"immediate\")) { score += 10; reasons.push(\"urgent timeline (+10)\"); }\nelse if (urgency.includes(\"month\")) { score += 5; reasons.push(\"within a month (+5)\"); }\nelse { reasons.push(\"no urgency given / just researching (+0)\"); }\n\n// 6. Decision authority\nconst role = (lead.decisionRole || \"\").toLowerCase();\nif (role.includes(\"owner\") || role.includes(\"facilit\") || role.includes(\"manager\")) { score += 10; reasons.push(\"decision-maker role (+10)\"); }\nelse { reasons.push(\"decision authority unknown (+0)\"); }\n\n// 7. Contact completeness\nconst hasValidContact = !!(lead.email || lead.phone);\nif (lead.email && lead.phone) { score += 5; reasons.push(\"email + phone provided (+5)\"); }\n\n// 8. Enrichment signal (from Firecrawl, real site content -- not an AI guess)\nif (lead.enrichmentSignal > 0) { score += lead.enrichmentSignal; reasons.push(`${lead.enrichmentNote} (+${lead.enrichmentSignal})`); }\n\n// 9. Referral / existing customer source\nconst src = (lead.source || \"\").toLowerCase();\nif (src.includes(\"referral\") || src.includes(\"existing customer\")) { score += 10; reasons.push(\"referral/existing customer source (+10)\"); }\n\nscore = Math.max(0, Math.min(100, score));\n\nconst needsHumanReview = !hasValidContact || (score >= HUMAN_REVIEW_MIN && score <= HUMAN_REVIEW_MAX);\nlet routeDecision;\nif (needsHumanReview) routeDecision = \"human\";\nelse if (score >= AUTO_BOOK_THRESHOLD) routeDecision = \"book\";\nelse routeDecision = \"followup\";\n\nreturn {\n  json: {\n    ...lead,\n    score,\n    needsHumanReview,\n    routeDecision,\n    scoreExplanation: reasons.join(\"; \"),\n    responseTimeMs: Date.now() - lead.leadReceivedAtMs,\n    salesEmail: SALES_EMAIL,\n    bookingLink: BOOKING_LINK\n  }\n};"
+      },
+      "id": "code6d",
+      "name": "Score Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.airtable.com/v0/appzMls810KbcYHBe/Leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { \"Name\": $json.name, \"Email\": $json.email, \"Phone\": $json.phone, \"Company\": $json.companyName, \"Website\": $json.companyWebsite, \"Service Area\": $json.serviceArea, \"Building Type\": $json.buildingType, \"Sqft\": $json.sqft, \"Frequency\": $json.frequency, \"Urgency\": $json.urgency, \"Decision Role\": $json.decisionRole, \"Source\": $json.source, \"Score\": $json.score, \"Score Explanation\": $json.scoreExplanation, \"Route Decision\": $json.routeDecision, \"Response Time Ms\": $json.responseTimeMs, \"Booked\": false } }) }}",
+        "options": {}
+      },
+      "id": "http6b",
+      "name": "Write Lead to CRM (Airtable)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "position": [-160, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Airtable API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const lead = $('Score Lead').item.json;\nreturn {\n  json: {\n    ...lead,\n    airtableRecordId: $json.id || null\n  }\n};"
+      },
+      "id": "code6e",
+      "name": "Merge CRM Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [80, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond6b",
+              "leftValue": "={{ $json.routeDecision }}",
+              "rightValue": "human",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if6b",
+      "name": "Needs Human Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [320, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [$json.salesEmail], subject: `Lead needs your review: ${$json.name}`, text: `A lead came in that needs a human look before booking or auto-following-up.\\n\\nName: ${$json.name}\\nEmail: ${$json.email}\\nPhone: ${$json.phone}\\nCompany: ${$json.companyName}\\nService area: ${$json.serviceArea}\\nBuilding type: ${$json.buildingType}\\nSqft: ${$json.sqft}\\nFrequency: ${$json.frequency}\\nUrgency: ${$json.urgency}\\nMessage: ${$json.message}\\n\\nScore: ${$json.score}/100\\nWhy: ${$json.scoreExplanation}\\n\\nCRM record ID: ${$json.airtableRecordId}` }) }}",
+        "options": {}
+      },
+      "id": "http6c",
+      "name": "Alert Salesperson (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, -220],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"needs_human_review\", score: $('Merge CRM Result').item.json.score, airtableRecordId: $('Merge CRM Result').item.json.airtableRecordId } }}",
+        "options": {}
+      },
+      "id": "respond6a",
+      "name": "Respond (Needs Human Review)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [800, -220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond6c",
+              "leftValue": "={{ $json.routeDecision }}",
+              "rightValue": "book",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if6c",
+      "name": "Auto-Book?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [560, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [$json.email], subject: `Let's get your cleaning scheduled, ${$json.name}`, text: `Hi ${$json.name},\\n\\nThanks for reaching out about cleaning for ${$json.companyName || 'your space'}! Based on what you shared, we're a great fit -- grab a time that works for you here:\\n\\n${$json.bookingLink}?name=${encodeURIComponent($json.name)}&email=${encodeURIComponent($json.email)}&metadata[leadId]=${$json.airtableRecordId}\\n\\nTalk soon,\\nThe Team` }) }}",
+        "options": {}
+      },
+      "id": "http6d",
+      "name": "Send Booking Link (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, 40],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"booking_link_sent\", score: $('Merge CRM Result').item.json.score, airtableRecordId: $('Merge CRM Result').item.json.airtableRecordId } }}",
+        "options": {}
+      },
+      "id": "respond6b",
+      "name": "Respond (Booking Link Sent)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1040, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [ { parts: [ { text: `You are a warm, low-pressure sales assistant for a commercial cleaning company, following up with a lead that isn't quite ready to book yet. Write a short, genuine follow-up email (under 120 words) that references what they shared, asks ONE clarifying question about whatever's missing or unclear (property size, service frequency, or timeline), and offers the booking link at the end. No subject line, no markdown, plain text only, sign off as \"The Team\".\\n\\nLead name: ${$json.name}\\nCompany: ${$json.companyName}\\nWhat they shared: ${$json.message}\\nBooking link: ${$json.bookingLink}` } ] } ] }) }}",
+        "options": {}
+      },
+      "id": "http6e",
+      "name": "Draft Follow-Up (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, 240],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": null,
+          "name": "Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const reply = $json.candidates[0].content.parts[0].text.trim();\nconst lead = $('Merge CRM Result').item.json;\nreturn {\n  json: {\n    ...lead,\n    to: lead.email,\n    subject: `Following up, ${lead.name}`,\n    followUpText: reply\n  }\n};"
+      },
+      "id": "code6f",
+      "name": "Build Follow-Up Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [$json.to], subject: $json.subject, text: $json.followUpText }) }}",
+        "options": {}
+      },
+      "id": "http6f",
+      "name": "Send Follow-Up (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1280, 240],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Resend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"follow_up_sent\", score: $('Build Follow-Up Email').item.json.score, airtableRecordId: $('Build Follow-Up Email').item.json.airtableRecordId } }}",
+        "options": {}
+      },
+      "id": "respond6c",
+      "name": "Respond (Follow-Up Sent)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1520, 240]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-qualification-booked",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook6b",
+      "name": "Booking Confirmed Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1600, 560],
+      "webhookId": "lead-qualification-booked"
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const body = $json.body || {};\nconst payload = body.payload || {};\nconst attendee = (payload.attendees && payload.attendees[0]) || {};\nconst leadId = (payload.metadata && (payload.metadata.leadId || payload.metadata.leadid)) || null;\n\nreturn {\n  json: {\n    airtableRecordId: leadId,\n    attendeeEmail: attendee.email || \"\",\n    attendeeName: attendee.name || \"\",\n    bookingUid: payload.uid || \"\",\n    startTime: payload.startTime || \"\"\n  }\n};"
+      },
+      "id": "code6g",
+      "name": "Parse Cal.com Booking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1360, 560]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond6d",
+              "leftValue": "={{ $json.airtableRecordId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if6d",
+      "name": "Has Lead ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-1120, 560]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.airtable.com/v0/appzMls810KbcYHBe/Leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={{ '{Email} = \"' + $json.attendeeEmail + '\"' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http6g",
+      "name": "Find Lead by Email (Airtable)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-880, 680],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Airtable API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsRunOnceForEachItem": true,
+        "jsCode": "const records = $json.records || [];\nif (records.length === 0) {\n  throw new Error(\"No matching lead record found for booking confirmation email: \" + $('Parse Cal.com Booking').item.json.attendeeEmail);\n}\nreturn {\n  json: {\n    ...($('Parse Cal.com Booking').item.json),\n    airtableRecordId: records[0].id\n  }\n};"
+      },
+      "id": "code6h",
+      "name": "Extract Record ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-640, 680]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.airtable.com/v0/appzMls810KbcYHBe/Leads/{{ $json.airtableRecordId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { \"Booked\": true, \"Booked At Ms\": Date.now() } }) }}",
+        "options": {}
+      },
+      "id": "http6h",
+      "name": "Mark Booked in CRM (Airtable)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-400, 560],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Airtable API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"booked_confirmed\", airtableRecordId: $json.id } }}",
+        "options": {}
+      },
+      "id": "respond6d",
+      "name": "Respond (Booked)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [-160, 560]
+    }
+  ],
+  "connections": {
+    "Lead Webhook": {
+      "main": [[{ "node": "Capture & Validate", "type": "main", "index": 0 }]]
+    },
+    "Capture & Validate": {
+      "main": [[{ "node": "Has Company Website?", "type": "main", "index": 0 }]]
+    },
+    "Has Company Website?": {
+      "main": [
+        [{ "node": "Enrich via Firecrawl", "type": "main", "index": 0 }],
+        [{ "node": "Skip Enrichment", "type": "main", "index": 0 }]
+      ]
+    },
+    "Enrich via Firecrawl": {
+      "main": [[{ "node": "Parse Enrichment", "type": "main", "index": 0 }]]
+    },
+    "Parse Enrichment": {
+      "main": [[{ "node": "Score Lead", "type": "main", "index": 0 }]]
+    },
+    "Skip Enrichment": {
+      "main": [[{ "node": "Score Lead", "type": "main", "index": 0 }]]
+    },
+    "Score Lead": {
+      "main": [[{ "node": "Write Lead to CRM (Airtable)", "type": "main", "index": 0 }]]
+    },
+    "Write Lead to CRM (Airtable)": {
+      "main": [[{ "node": "Merge CRM Result", "type": "main", "index": 0 }]]
+    },
+    "Merge CRM Result": {
+      "main": [[{ "node": "Needs Human Review?", "type": "main", "index": 0 }]]
+    },
+    "Needs Human Review?": {
+      "main": [
+        [{ "node": "Alert Salesperson (Resend)", "type": "main", "index": 0 }],
+        [{ "node": "Auto-Book?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Alert Salesperson (Resend)": {
+      "main": [[{ "node": "Respond (Needs Human Review)", "type": "main", "index": 0 }]]
+    },
+    "Auto-Book?": {
+      "main": [
+        [{ "node": "Send Booking Link (Resend)", "type": "main", "index": 0 }],
+        [{ "node": "Draft Follow-Up (Gemini)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Booking Link (Resend)": {
+      "main": [[{ "node": "Respond (Booking Link Sent)", "type": "main", "index": 0 }]]
+    },
+    "Draft Follow-Up (Gemini)": {
+      "main": [[{ "node": "Build Follow-Up Email", "type": "main", "index": 0 }]]
+    },
+    "Build Follow-Up Email": {
+      "main": [[{ "node": "Send Follow-Up (Resend)", "type": "main", "index": 0 }]]
+    },
+    "Send Follow-Up (Resend)": {
+      "main": [[{ "node": "Respond (Follow-Up Sent)", "type": "main", "index": 0 }]]
+    },
+    "Booking Confirmed Webhook": {
+      "main": [[{ "node": "Parse Cal.com Booking", "type": "main", "index": 0 }]]
+    },
+    "Parse Cal.com Booking": {
+      "main": [[{ "node": "Has Lead ID?", "type": "main", "index": 0 }]]
+    },
+    "Has Lead ID?": {
+      "main": [
+        [{ "node": "Mark Booked in CRM (Airtable)", "type": "main", "index": 0 }],
+        [{ "node": "Find Lead by Email (Airtable)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Find Lead by Email (Airtable)": {
+      "main": [[{ "node": "Extract Record ID", "type": "main", "index": 0 }]]
+    },
+    "Extract Record ID": {
+      "main": [[{ "node": "Mark Booked in CRM (Airtable)", "type": "main", "index": 0 }]]
+    },
+    "Mark Booked in CRM (Airtable)": {
+      "main": [[{ "node": "Respond (Booked)", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
