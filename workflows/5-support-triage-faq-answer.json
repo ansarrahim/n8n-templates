@@ -139,7 +139,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [\"ansarrahim789@gmail.com\"], reply_to: $json.email, subject: \"Support escalation: \" + $json.name, text: \"Needs a human reply.\\n\\nFrom: \" + $json.name + \" <\" + $json.email + \">\\n\\nOriginal message:\\n\" + $json.message + \"\\n\\nAI summary:\\n\" + $json.escalationSummary }) }}",
+        "jsonBody": "={{ JSON.stringify({ from: \"CrewLogic Labs <onboarding@resend.dev>\", to: [\"crewlogiclabs@gmail.com\"], reply_to: $json.email, subject: \"Support escalation: \" + $json.name, text: \"Needs a human reply.\\n\\nFrom: \" + $json.name + \" <\" + $json.email + \">\\n\\nOriginal message:\\n\" + $json.message + \"\\n\\nAI summary:\\n\" + $json.escalationSummary }) }}",
         "options": {}
       },
       "id": "http3",
